@@ -1,0 +1,145 @@
+import cv2
+import os
+import subprocess
+import tempfile
+import shutil
+import json
+import signal
+import sys
+
+# 配置
+VIDEO_PATH = '/home/aistudio/FPV_AR01.mp4'
+OUTPUT_VIDEO = '/home/aistudio/output_detected_gpu.mp4'
+PROGRESS_FILE = '/home/aistudio/progress_gpu.json'
+THRESHOLD = 0.5
+FRAME_SKIP = 1
+
+
+current_frame = 0
+total_frames = 0
+out = None
+cap = None
+
+def save_progress():
+    """保存当前进度"""
+    with open(PROGRESS_FILE, 'w') as f:
+        json.dump({'last_frame': current_frame}, f)
+    print(f"\n✅ 进度已保存: 第 {current_frame} 帧")
+
+def signal_handler(sig, frame):
+    save_progress()
+    if out:
+        out.release()
+    if cap:
+        cap.release()
+    sys.exit(0)
+
+# 注册信号处理
+signal.signal(signal.SIGINT, signal_handler)
+
+def get_saved_frames(video_path):
+    """获取已保存的视频帧数"""
+    if not os.path.exists(video_path):
+        return 0
+    cap = cv2.VideoCapture(video_path)
+    frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    cap.release()
+    return frames
+
+def main():
+    global current_frame, total_frames, out, cap
+    
+    # 切换到PaddleDetection目录
+    os.chdir('/home/aistudio/PaddleDetection')
+    print(f"工作目录: {os.getcwd()}")
+    
+    # 获取已处理的帧数
+    start_frame = get_saved_frames(OUTPUT_VIDEO)
+    print(f"已有进度: {start_frame} 帧")
+    
+    # 打开原视频
+    cap = cv2.VideoCapture(VIDEO_PATH)
+    if not cap.isOpened():
+        print(f"错误：无法打开视频 {VIDEO_PATH}")
+        return
+    
+    fps = int(cap.get(cv2.CAP_PROP_FPS))
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    
+    print(f"视频: {width}x{height}, {fps}fps, 共{total_frames}帧")
+    
+    # 跳到上次处理的位置
+    cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+    current_frame = start_frame
+    
+    # 创建输出视频
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    out = cv2.VideoWriter(OUTPUT_VIDEO, fourcc, fps, (width, height))
+    
+    # 如果是从中间开始，先把已有的帧复制过来
+    if start_frame > 0:
+        temp_cap = cv2.VideoCapture(OUTPUT_VIDEO)
+        for _ in range(start_frame):
+            ret, frame = temp_cap.read()
+            if ret:
+                out.write(frame)
+        temp_cap.release()
+        print(f"已复制 {start_frame} 帧")
+    
+    # 创建临时目录
+    temp_dir = tempfile.mkdtemp()
+    print(f"临时目录: {temp_dir}")
+    
+    detected_frames = 0
+    
+    while current_frame < total_frames:
+        ret, frame = cap.read()
+        if not ret:
+            break
+        
+        # 保存当前帧
+        frame_path = os.path.join(temp_dir, 'current_frame.jpg')
+        cv2.imwrite(frame_path, frame)
+        
+        # GPU推理命令
+        cmd = f"""python tools/infer.py \
+            -c configs/ppyoloe/ppyoloe_plus_crn_m_80e_coco.yml \
+            --infer_img={frame_path} \
+            --output_dir={temp_dir} \
+            --draw_threshold={THRESHOLD} \
+            -o weights=/home/aistudio/PaddleDetection/output/ppyoloe_plus_crn_m_80e_coco/best_model.pdparams \
+            use_gpu=True"""
+        
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+        
+        # 读取检测后的图片
+        detected_path = os.path.join(temp_dir, 'current_frame.jpg')
+        if os.path.exists(detected_path):
+            result_frame = cv2.imread(detected_path)
+            detected_frames += 1
+        else:
+            result_frame = frame
+        
+        out.write(result_frame)
+        
+        current_frame += 1
+        if current_frame % 30 == 0:
+            print(f"进度: {current_frame}/{total_frames} ({current_frame/total_frames*100:.1f}%) | 有框帧: {detected_frames}")
+        
+        # 每50帧自动保存一次进度
+        if current_frame % 50 == 0:
+            save_progress()
+    
+    # 完成，删除进度文件
+    save_progress()
+    cap.release()
+    out.release()
+    shutil.rmtree(temp_dir)
+    
+    if os.path.exists(PROGRESS_FILE):
+        os.remove(PROGRESS_FILE)
+    
+    print(f"\n 检测到目标的帧数: {detected_frames}/{current_frame}")
+    print(f"输出视频: {OUTPUT_VIDEO}")
