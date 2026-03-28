@@ -6,7 +6,6 @@ import shutil
 import json
 import signal
 import sys
-
 # 配置
 VIDEO_PATH = '/home/aistudio/FPV_AR01.mp4'
 OUTPUT_VIDEO = '/home/aistudio/output_detected_gpu.mp4'
@@ -24,7 +23,7 @@ def save_progress():
     """保存当前进度"""
     with open(PROGRESS_FILE, 'w') as f:
         json.dump({'last_frame': current_frame}, f)
-    print(f"\n✅ 进度已保存: 第 {current_frame} 帧")
+    print(f"\n 进度已保存: 第 {current_frame} 帧")
 
 def signal_handler(sig, frame):
     save_progress()
