@@ -11,9 +11,9 @@ import os
 #配置参数
 
 # 检测结果文件(模型检测后导出的json文件路径)
-JSON_PATH = '/home/aistudio/PaddleDetection/output/detection_result.json'
+JSON_PATH = '.json'
 # 相机参数
-FOCAL_LENGTH = 800  # 像素焦距
+FOCAL_LENGTH = 800  # 像素焦距(未定)
 # 物体真实高度(等官方数据或是自己测)
 OBJECT_HEIGHTS = {
     0: 0.05,    # coin
